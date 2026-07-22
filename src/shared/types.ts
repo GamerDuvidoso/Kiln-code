@@ -64,8 +64,9 @@ export interface GitStatus {
 
 export interface SystemStats {
 
-  cpu: number
-
+  cpu: {
+    usage: number
+  }
   ram: {
     used: number
     total: number

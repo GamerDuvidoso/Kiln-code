@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentEvent,
   AgentRunRequest,
-  OllamaModel
+  OllamaModel,
 } from '../../shared/types'
 
 interface Props {
@@ -27,7 +27,8 @@ export default function AgentPanel({
   const [prompt, setPrompt] = useState('')
 
   const [running, setRunning] = useState(false)
-  const [systemStats, setSystemStats] = useState<any>(null)
+
+  
 
   const [mode, setMode] =
     useState<
@@ -75,22 +76,6 @@ export default function AgentPanel({
   useEffect(() => {
     void refreshModels()
   }, [])
-
-useEffect(() => {
-
-  const timer = setInterval(async () => {
-
-    const stats = await window.kiln.system.stats()
-
-    setSystemStats(stats)
-
-  }, 2000)
-
-
-  return () => clearInterval(timer)
-
-}, [])
-
 
   useEffect(() => {
 
@@ -255,6 +240,7 @@ useEffect(() => {
         flexDirection: 'column',
         height: '100%',
         minHeight: 0
+        
       }}
     >
 
@@ -320,8 +306,6 @@ useEffect(() => {
 
         </select>
 
-
-
         <select
           value={mode}
           onChange={(e) =>
@@ -352,19 +336,6 @@ useEffect(() => {
           </option>
 
         </select>
-
-{
-  systemStats && (
-    <div
-      style={{
-        fontSize: 11,
-        color: 'var(--text-dim)'
-      }}
-    >
-      RAM: {systemStats.ram.percent.toFixed(1)}%
-    </div>
-  )
-}
 
         <button
           onClick={refreshModels}

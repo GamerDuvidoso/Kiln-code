@@ -246,11 +246,9 @@ function registerAgentHandlers() {
         ...req.history
       ];
       async function chatWithOllama(requestBody) {
-        console.log("ANTES DO FETCH");
         const fetchFn = globalThis.fetch;
-        if (typeof fetchFn !== "function") {
-          throw new Error("fetch não disponível");
-        }
+        console.time("TOTAL");
+        console.time("FETCH");
         const res = await fetchFn(`${OLLAMA_BASE_URL}/chat`, {
           method: "POST",
           headers: {
@@ -258,16 +256,15 @@ function registerAgentHandlers() {
           },
           body: JSON.stringify(requestBody)
         });
+        console.timeEnd("FETCH");
         if (!res.ok) {
           const error = await res.text();
-          throw new Error(
-            `Ollama error ${res.status}: ${error}`
-          );
+          throw new Error(`Ollama error ${res.status}: ${error}`);
         }
-        console.log("FETCH TERMINOU");
-        console.log("STATUS:", res.status);
+        console.time("JSON");
         const json = await res.json();
-        console.log("JSON:", json);
+        console.timeEnd("JSON");
+        console.timeEnd("TOTAL");
         return json;
       }
       try {
@@ -312,18 +309,6 @@ function registerAgentHandlers() {
   );
 }
 const execAsync = node_util.promisify(node_child_process.exec);
-function getCpuUsage() {
-  const cpus = os.cpus();
-  let idle = 0;
-  let total = 0;
-  for (const cpu of cpus) {
-    idle += cpu.times.idle;
-    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
-  }
-  return Math.round(
-    100 - idle / total * 100
-  );
-}
 function registerSystemHandlers() {
   electron.ipcMain.handle(
     "system:stats",
@@ -351,9 +336,6 @@ function registerSystemHandlers() {
         gpu = [];
       }
       return {
-        cpu: {
-          usage: getCpuUsage()
-        },
         ram: {
           used: ramUsed,
           total: totalRam,

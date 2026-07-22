@@ -29,7 +29,6 @@ function getCpuUsage(): number {
   )
 }
 
-
 export function registerSystemHandlers(): void {
 
   ipcMain.handle(
@@ -81,9 +80,7 @@ export function registerSystemHandlers(): void {
 
       return {
 
-        cpu: {
-          usage: getCpuUsage()
-        },
+         
 
 
         ram: {

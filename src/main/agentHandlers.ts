@@ -42,7 +42,6 @@ export function registerAgentHandlers(): void {
         throw new Error(`Modo inválido: ${String(mode)}`)
       }
 
-
       const messages = [
         {
           role: 'system',
@@ -52,47 +51,37 @@ export function registerAgentHandlers(): void {
       ]
 
 
-      async function chatWithOllama(requestBody: unknown): Promise<any> {
+async function chatWithOllama(requestBody: unknown): Promise<any> {
 
-    console.log("ANTES DO FETCH")
+  const fetchFn = globalThis.fetch
 
-    const fetchFn = (globalThis as any).fetch
-
-    if (typeof fetchFn !== 'function') {
-      throw new Error('fetch não disponível')
-    }
+  console.time("TOTAL")
+  console.time("FETCH")
 
   const res = await fetchFn(`${OLLAMA_BASE_URL}/chat`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify(requestBody)
-})
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+  })
 
+  console.timeEnd("FETCH")
 
-if (!res.ok) {
-  const error = await res.text()
+  if (!res.ok) {
+    const error = await res.text()
+    throw new Error(`Ollama error ${res.status}: ${error}`)
+  }
 
-  throw new Error(
-    `Ollama error ${res.status}: ${error}`
-  )
-}
-
-
-console.log("FETCH TERMINOU")
-console.log("STATUS:", res.status)
-
+  console.time("JSON")
 
   const json = await res.json()
 
-
-  console.log("JSON:", json)
-
+  console.timeEnd("JSON")
+  console.timeEnd("TOTAL")
 
   return json
 }
-
 
       try {
 

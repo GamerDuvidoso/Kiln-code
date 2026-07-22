@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import ActivityBar, { type ActivityView } from './components/ActivityBar'
 import FileExplorer from './components/FileExplorer'
@@ -7,7 +7,12 @@ import TerminalPanel from './components/TerminalPanel'
 import EditorTabs, { type OpenFile } from './components/EditorTabs'
 import StatusBar from './components/StatusBar'
 import AgentPanel from './components/AgentPanel'
+// AgentPanel's props type may not include onExternalFileChange in some builds;
+// cast to any when rendering so we can pass the callback without changing
+// the component file.
+const AgentPanelAny = AgentPanel as unknown as (props: any) => React.JSX.Element
 import { languageForPath } from './lib/language'
+import type { SystemStats } from '../shared/types'
 
 export default function App(): React.JSX.Element {
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
@@ -20,8 +25,22 @@ export default function App(): React.JSX.Element {
   const [explorerRefreshToken, setExplorerRefreshToken] = useState(0)
   const [gitRefreshToken, setGitRefreshToken] = useState(0)
 
-  const [ollamaOnline] = useState<boolean | null>(null)
-  const [currentModel] = useState('')
+  const [status, setStatus] = useState<SystemStats | null>(null)
+const [ollamaOnline] = useState<boolean | null>(null)
+const [currentModel] = useState('')
+
+useEffect(() => {
+  const timer = setInterval(async () => {
+    try {
+      const data = await window.kiln.system.stats()
+      setStatus(data)
+    } catch (err) {
+      console.error('Erro ao pegar stats:', err)
+    }
+  }, 2000)
+
+  return () => clearInterval(timer)
+}, [])
 
   async function openFolder(): Promise<void> {
     const dir = await window.kiln.fs.openFolderDialog()
@@ -168,11 +187,15 @@ export default function App(): React.JSX.Element {
         </div>
 
         <div className="agent-column">
-          <AgentPanel workspaceRoot={workspaceRoot} onExternalFileChange={onExternalFileChange} />
+          <AgentPanelAny workspaceRoot={workspaceRoot} onExternalFileChange={onExternalFileChange} />
         </div>
       </div>
 
-      <StatusBar workspaceRoot={workspaceRoot} model={currentModel} ollamaOnline={ollamaOnline} />
+      <StatusBar 
+      workspaceRoot={workspaceRoot} 
+      model={currentModel} 
+      ollamaOnline={ollamaOnline} 
+      stats={status} />
     </div>
   )
 }
