@@ -39,6 +39,7 @@ export interface AgentRunRequest {
 }
 
 export type AgentEvent =
+  | { type: 'agent_thinking'; runId: string; text: string }
   | { type: 'assistant_text'; runId: string; text: string }
   | {
       type: 'approval_requested'

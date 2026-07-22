@@ -1,7 +1,7 @@
-import { ipcMain, app } from 'electron'
-import { Server as WebSocketServer } from 'ws'
+import { ipcMain } from 'electron'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { getMainWindow } from './windowRef'
 
 // Lazy load node-pty só se conseguir
 let pty: any = null
@@ -13,6 +13,7 @@ try {
 
 type PtyProcess = {
   onData: (cb: (data: string) => void) => void
+  onExit: (cb: (e: { exitCode: number; signal?: number }) => void) => void
   write: (data: string) => void
   resize: (cols: number, rows: number) => void
   kill: () => void
@@ -31,68 +32,59 @@ function spawnPty(cwd: string): PtyProcess | null {
 }
 
 const sessions = new Map<string, PtyProcess>()
-let wss: WebSocketServer | null = null
+
+/**
+ * Encerra todas as sessões de terminal ativas.
+ * Deve ser chamado em app.on('before-quit') para não deixar
+ * processos de shell órfãos rodando em background.
+ */
+export function killAllTerminals(): void {
+  for (const proc of sessions.values()) {
+    try {
+      proc.kill()
+    } catch {
+      // processo já pode ter morrido; ignora
+    }
+  }
+  sessions.clear()
+}
 
 export function registerTerminalHandlers(): void {
-  // Criar WebSocket server na porta 9001
-  if (!wss) {
-    wss = new WebSocketServer({ port: 9001 })
-    console.log('WebSocket server rodando na porta 9001')
+  ipcMain.handle('terminal:create', (_e, cwd: string): string => {
+    const id = randomUUID()
+    const proc = spawnPty(cwd)
 
-    wss.on('connection', (ws) => {
-      const termId = randomUUID()
-      const proc = spawnPty(app.getPath('home'))
+    if (!proc) {
+      throw new Error('Terminal não disponível (node-pty não carregou)')
+    }
 
-      if (!proc) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Terminal não disponível' }))
-        ws.close()
-        return
-      }
+    sessions.set(id, proc)
 
-      sessions.set(termId, proc)
-
-      ws.send(JSON.stringify({ type: 'ready', id: termId }))
-
-      proc.onData((data: string) => {
-        if (ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'data', id: termId, payload: data }))
-        }
-      })
-
-      ws.on('message', (msg: string) => {
-        try {
-          const parsed = JSON.parse(msg)
-          if (parsed.type === 'input') {
-            proc.write(parsed.data)
-          } else if (parsed.type === 'resize') {
-            proc.resize(parsed.cols, parsed.rows)
-          }
-        } catch (e) {
-          console.error('Error parsing terminal message:', e)
-        }
-      })
-
-      ws.on('close', () => {
-        proc.kill()
-        sessions.delete(termId)
-      })
+    proc.onData((data: string) => {
+      getMainWindow()?.webContents.send(`terminal:data:${id}`, data)
     })
-  }
 
-  // Manter compatibility com código antigo (não vai usar)
-  ipcMain.handle('terminal:create', (): string => {
-    return randomUUID()
+    proc.onExit(({ exitCode }) => {
+      getMainWindow()?.webContents.send(`terminal:exit:${id}`, exitCode)
+      sessions.delete(id)
+    })
+
+    return id
   })
 
-  ipcMain.on('terminal:write', () => {
-    // No-op com WebSocket
+  ipcMain.on('terminal:write', (_e, id: string, data: string) => {
+    sessions.get(id)?.write(data)
   })
 
-  ipcMain.on('terminal:resize', () => {
-    // No-op com WebSocket
+  ipcMain.on('terminal:resize', (_e, id: string, cols: number, rows: number) => {
+    sessions.get(id)?.resize(cols, rows)
   })
 
-  ipcMain.on('terminal:dispose', () => {
-    // No-op com WebSocket
+  ipcMain.on('terminal:dispose', (_e, id: string) => {
+    const proc = sessions.get(id)
+    if (proc) {
+      proc.kill()
+      sessions.delete(id)
+    }
   })
 }

@@ -3,7 +3,6 @@ const electron = require("electron");
 const path = require("node:path");
 const node_fs = require("node:fs");
 const simpleGit = require("simple-git");
-const ws = require("ws");
 const os = require("node:os");
 const node_crypto = require("node:crypto");
 let mainWindow = null;
@@ -48,7 +47,7 @@ function registerFsHandlers() {
       if (!filename) return;
       event.sender.send(`fs:watchEvent:${watchId}`, path.join(dirPath, filename.toString()));
     });
-    event.sender.once("fs:watchStop", () => watcher.close());
+    electron.ipcMain.once(`fs:watchStop:${watchId}`, () => watcher.close());
   });
 }
 function mapStatus(code) {
@@ -124,52 +123,35 @@ function spawnPty(cwd) {
   });
 }
 const sessions = /* @__PURE__ */ new Map();
-let wss = null;
 function registerTerminalHandlers() {
-  if (!wss) {
-    wss = new ws.Server({ port: 9001 });
-    console.log("WebSocket server rodando na porta 9001");
-    wss.on("connection", (ws2) => {
-      const termId = node_crypto.randomUUID();
-      const proc = spawnPty(electron.app.getPath("home"));
-      if (!proc) {
-        ws2.send(JSON.stringify({ type: "error", message: "Terminal não disponível" }));
-        ws2.close();
-        return;
-      }
-      sessions.set(termId, proc);
-      ws2.send(JSON.stringify({ type: "ready", id: termId }));
-      proc.onData((data) => {
-        if (ws2.readyState === 1) {
-          ws2.send(JSON.stringify({ type: "data", id: termId, payload: data }));
-        }
-      });
-      ws2.on("message", (msg) => {
-        try {
-          const parsed = JSON.parse(msg);
-          if (parsed.type === "input") {
-            proc.write(parsed.data);
-          } else if (parsed.type === "resize") {
-            proc.resize(parsed.cols, parsed.rows);
-          }
-        } catch (e) {
-          console.error("Error parsing terminal message:", e);
-        }
-      });
-      ws2.on("close", () => {
-        proc.kill();
-        sessions.delete(termId);
-      });
+  electron.ipcMain.handle("terminal:create", (_e, cwd) => {
+    const id = node_crypto.randomUUID();
+    const proc = spawnPty(cwd);
+    if (!proc) {
+      throw new Error("Terminal não disponível (node-pty não carregou)");
+    }
+    sessions.set(id, proc);
+    proc.onData((data) => {
+      getMainWindow()?.webContents.send(`terminal:data:${id}`, data);
     });
-  }
-  electron.ipcMain.handle("terminal:create", () => {
-    return node_crypto.randomUUID();
+    proc.onExit(({ exitCode }) => {
+      getMainWindow()?.webContents.send(`terminal:exit:${id}`, exitCode);
+      sessions.delete(id);
+    });
+    return id;
   });
-  electron.ipcMain.on("terminal:write", () => {
+  electron.ipcMain.on("terminal:write", (_e, id, data) => {
+    sessions.get(id)?.write(data);
   });
-  electron.ipcMain.on("terminal:resize", () => {
+  electron.ipcMain.on("terminal:resize", (_e, id, cols, rows) => {
+    sessions.get(id)?.resize(cols, rows);
   });
-  electron.ipcMain.on("terminal:dispose", () => {
+  electron.ipcMain.on("terminal:dispose", (_e, id) => {
+    const proc = sessions.get(id);
+    if (proc) {
+      proc.kill();
+      sessions.delete(id);
+    }
   });
 }
 const pendingApprovals = /* @__PURE__ */ new Map();
@@ -268,7 +250,11 @@ function registerAgentHandlers() {
             model,
             messages,
             tools: TOOLS,
-            stream: false
+            stream: false,
+            // Ativa o raciocínio nos modelos que suportam (deepseek-r1,
+            // qwen3, gpt-oss, etc). Modelos sem suporte simplesmente
+            // ignoram este campo e não retornam `message.thinking`.
+            think: true
           })
         });
         if (!res.ok) {
@@ -276,6 +262,9 @@ function registerAgentHandlers() {
         }
         const data = await res.json();
         const message = data.message;
+        if (message?.thinking) {
+          send({ type: "agent_thinking", runId, text: message.thinking });
+        }
         if (message?.content) {
           send({ type: "assistant_text", runId, text: message.content });
         }

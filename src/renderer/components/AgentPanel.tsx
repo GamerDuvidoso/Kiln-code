@@ -46,6 +46,10 @@ export default function AgentPanel({
 
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
 
+  // ---- Raciocínio (thinking) do turno atual ----
+  const [currentThinking, setCurrentThinking] = useState('')
+  const [thinkingExpanded, setThinkingExpanded] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // ---- Carregar modelos automaticamente ----
@@ -81,7 +85,7 @@ export default function AgentPanel({
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth'
     })
-  }, [messages, pendingApproval])
+  }, [messages, pendingApproval, currentThinking])
 
   // ---- Histórico para enviar ao modelo ----
   const history = useMemo(
@@ -115,6 +119,9 @@ export default function AgentPanel({
     setMessages((m) => [...m, userMessage])
     setPrompt('')
     setRunning(true)
+    // Limpa o raciocínio do turno anterior — senão ele fica colado no
+    // próximo turno, misturando duas respostas diferentes no mesmo bloco.
+    setCurrentThinking('')
 
     const req: AgentRunRequest = {
       runId: crypto.randomUUID(),
@@ -131,6 +138,10 @@ export default function AgentPanel({
   useEffect(() => {
     const off = window.kiln.agent.onEvent(async (event: AgentEvent) => {
       switch (event.type) {
+        case 'agent_thinking':
+          setCurrentThinking((prev) => prev + event.text)
+          break
+
         case 'assistant_text':
           setMessages((old) => [
             ...old,
@@ -272,6 +283,54 @@ export default function AgentPanel({
 
       {/* Histórico de chat */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', minHeight: 0 }}>
+        {/* Bloco de raciocínio — colapsável, some quando vazio */}
+        {(currentThinking || running) && (
+          <div
+            style={{
+              marginBottom: 10,
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              background: 'var(--bg-elevated)',
+              overflow: 'hidden'
+            }}
+          >
+            <button
+              onClick={() => setThinkingExpanded((v) => !v)}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 10px',
+                fontSize: 12,
+                color: 'var(--text-dim)',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <span>🧠 Raciocínio{running && !currentThinking ? '...' : ''}</span>
+              <span>{thinkingExpanded ? '▲' : '▼'}</span>
+            </button>
+            {thinkingExpanded && (
+              <div
+                style={{
+                  padding: '8px 10px',
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  whiteSpace: 'pre-wrap',
+                  color: 'var(--text-dim)',
+                  borderTop: '1px solid var(--border)',
+                  maxHeight: 260,
+                  overflowY: 'auto'
+                }}
+              >
+                {currentThinking || 'Aguardando o modelo começar a pensar...'}
+              </div>
+            )}
+          </div>
+        )}
+
         {messages.map((m) => (
           <div
             key={m.id}

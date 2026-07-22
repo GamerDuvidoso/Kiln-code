@@ -132,7 +132,11 @@ export function registerAgentHandlers(): void {
             model,
             messages,
             tools: TOOLS,
-            stream: false
+            stream: false,
+            // Ativa o raciocínio nos modelos que suportam (deepseek-r1,
+            // qwen3, gpt-oss, etc). Modelos sem suporte simplesmente
+            // ignoram este campo e não retornam `message.thinking`.
+            think: true
           })
         })
 
@@ -142,6 +146,14 @@ export function registerAgentHandlers(): void {
 
         const data = await res.json()
         const message = data.message
+
+        // O raciocínio vem separado do conteúdo final pelo próprio Ollama.
+        // Emitimos como um evento à parte — é só apresentação, não entra
+        // no histórico enviado de volta ao modelo (ver `messages.push` logo
+        // abaixo, que usa `message` original sem alteração nenhuma).
+        if (message?.thinking) {
+          send({ type: 'agent_thinking', runId, text: message.thinking })
+        }
 
         if (message?.content) {
           send({ type: 'assistant_text', runId, text: message.content })

@@ -43,6 +43,6 @@ export function registerFsHandlers(): void {
       if (!filename) return
       event.sender.send(`fs:watchEvent:${watchId}`, path.join(dirPath, filename.toString()))
     })
-    event.sender.once('fs:watchStop', () => watcher.close())
+    ipcMain.once(`fs:watchStop:${watchId}`, () => watcher.close())
   })
 }
