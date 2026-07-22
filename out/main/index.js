@@ -5,6 +5,8 @@ const node_fs = require("node:fs");
 const simpleGit = require("simple-git");
 const os = require("node:os");
 const node_crypto = require("node:crypto");
+const node_child_process = require("node:child_process");
+const node_util = require("node:util");
 let mainWindow = null;
 function setMainWindow(win) {
   mainWindow = win;
@@ -309,30 +311,60 @@ function registerAgentHandlers() {
     }
   );
 }
+const execAsync = node_util.promisify(node_child_process.exec);
+function getCpuUsage() {
+  const cpus = os.cpus();
+  let idle = 0;
+  let total = 0;
+  for (const cpu of cpus) {
+    idle += cpu.times.idle;
+    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
+  }
+  return Math.round(
+    100 - idle / total * 100
+  );
+}
 function registerSystemHandlers() {
-  electron.ipcMain.handle("system:stats", async () => {
-    const cpus = os.cpus();
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    return {
-      cpu: {
-        cores: cpus.length,
-        model: cpus[0]?.model ?? "unknown",
-        usage: 0
-        // depois colocamos cálculo real
-      },
-      gpu: {
-        vramUsed: 0,
-        vramTotal: 0
-      },
-      ram: {
-        total: totalMem,
-        free: freeMem,
-        used: totalMem - freeMem,
-        percent: (totalMem - freeMem) / totalMem * 100
+  electron.ipcMain.handle(
+    "system:stats",
+    async () => {
+      const totalRam = os.totalmem();
+      const freeRam = os.freemem();
+      const ramUsed = totalRam - freeRam;
+      let gpu = [];
+      try {
+        const { stdout } = await execAsync(
+          "wmic path Win32_VideoController get Name,AdapterRAM"
+        );
+        const lines = stdout.split("\n").map((v) => v.trim()).filter(Boolean);
+        gpu = lines.slice(1).map((line) => {
+          const match = line.match(/(.+?)\s+(\d+)$/);
+          if (!match) {
+            return { name: line };
+          }
+          return {
+            name: match[1].trim(),
+            vram: Number(match[2]) / 1024 / 1024
+          };
+        });
+      } catch {
+        gpu = [];
       }
-    };
-  });
+      return {
+        cpu: {
+          usage: getCpuUsage()
+        },
+        ram: {
+          used: ramUsed,
+          total: totalRam,
+          percent: Math.round(
+            ramUsed / totalRam * 100
+          )
+        },
+        gpu
+      };
+    }
+  );
 }
 const isDev = !electron.app.isPackaged;
 function createWindow() {

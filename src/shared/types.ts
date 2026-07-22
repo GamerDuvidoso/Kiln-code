@@ -62,33 +62,43 @@ export interface GitStatus {
   files: GitStatusFile[]
 }
 
-export interface KilnApi {
-    system: {
-  stats: () => Promise<{
-    cpu: {
-      usage: number
-    }
+export interface SystemStats {
 
-    ram: {
-      used: number
-      total: number
-      percent: number
-    }
+  cpu: number
 
-    gpu: {
-      name: string
-      vram?: number
-      memoryUsed?: number
-    }[]
-  }>
+  ram: {
+    used: number
+    total: number
+  }
+
+  gpu: {
+
+    name: string
+    vramUsed: number
+    vramTotal: number
+    usage: number
+
+  } | null
+
 }
+export interface KilnApi {
+
+  system: {
+    stats: () => Promise<SystemStats>
+  }
+
+
   fs: {
     readDir: (dirPath: string) => Promise<FsEntry[]>
     readFile: (filePath: string) => Promise<string>
     writeFile: (filePath: string, content: string) => Promise<void>
     openFolderDialog: () => Promise<string | null>
-    watch: (dirPath: string, cb: (changedPath: string) => void) => () => void
+    watch: (
+      dirPath: string,
+      cb: (changedPath: string) => void
+    ) => () => void
   }
+
 
   git: {
     status: (root: string) => Promise<GitStatus>
@@ -98,24 +108,34 @@ export interface KilnApi {
     diff: (root: string, filePath: string) => Promise<string>
   }
 
+
   ollama: {
     health: () => Promise<boolean>
     listModels: () => Promise<OllamaModel[]>
   }
 
+
   terminal: {
     create: (cwd: string) => Promise<string>
     write: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
-    onData: (id: string, cb: (data: string) => void) => () => void
+    onData: (
+      id: string,
+      cb: (data: string) => void
+    ) => () => void
     dispose: (id: string) => void
   }
 
+
   agent: {
     run: (req: AgentRunRequest) => Promise<void>
-    onEvent: (cb: (event: AgentEvent) => void) => () => void
+    onEvent: (
+      cb: (event: AgentEvent) => void
+    ) => () => void
   }
+
 }
+
 
 declare global {
   interface Window {

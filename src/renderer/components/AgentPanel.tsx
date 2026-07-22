@@ -27,6 +27,7 @@ export default function AgentPanel({
   const [prompt, setPrompt] = useState('')
 
   const [running, setRunning] = useState(false)
+  const [systemStats, setSystemStats] = useState<any>(null)
 
   const [mode, setMode] =
     useState<
@@ -74,6 +75,21 @@ export default function AgentPanel({
   useEffect(() => {
     void refreshModels()
   }, [])
+
+useEffect(() => {
+
+  const timer = setInterval(async () => {
+
+    const stats = await window.kiln.system.stats()
+
+    setSystemStats(stats)
+
+  }, 2000)
+
+
+  return () => clearInterval(timer)
+
+}, [])
 
 
   useEffect(() => {
@@ -337,7 +353,18 @@ export default function AgentPanel({
 
         </select>
 
-
+{
+  systemStats && (
+    <div
+      style={{
+        fontSize: 11,
+        color: 'var(--text-dim)'
+      }}
+    >
+      RAM: {systemStats.ram.percent.toFixed(1)}%
+    </div>
+  )
+}
 
         <button
           onClick={refreshModels}
