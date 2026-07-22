@@ -12,18 +12,11 @@ export interface OllamaModel {
   modifiedAt?: string
 }
 
-export type AgentToolName =
-  | 'read_file'
-  | 'write_file'
-  | 'list_dir'
-  | 'run_command'
-  | 'search'
-
-export interface AgentToolPreview {
-  path: string
-  before: string
-  after: string
-}
+export type AgentMode =
+  | "ask"
+  | "code"
+  | "plan"
+  | "plan+code"
 
 export interface AgentHistoryMessage {
   role: 'user' | 'assistant'
@@ -35,24 +28,29 @@ export interface AgentRunRequest {
   workspaceRoot: string
   model: string
   history: AgentHistoryMessage[]
-  autoApprove: boolean
+  mode: AgentMode
 }
 
 export type AgentEvent =
-  | { type: 'agent_thinking'; runId: string; text: string }
-  | { type: 'assistant_text'; runId: string; text: string }
   | {
-      type: 'approval_requested'
+      type: 'agent_thinking'
       runId: string
-      callId: string
-      tool: AgentToolName
-      args: unknown
-      preview?: AgentToolPreview
+      text: string
     }
-  | { type: 'tool_call_start'; runId: string; callId: string; tool: AgentToolName }
-  | { type: 'tool_call_result'; runId: string; callId: string; result: unknown }
-  | { type: 'run_complete'; runId: string }
-  | { type: 'run_error'; runId: string; message: string }
+  | {
+      type: 'assistant_text'
+      runId: string
+      text: string
+    }
+  | {
+      type: 'run_complete'
+      runId: string
+    }
+  | {
+      type: 'run_error'
+      runId: string
+      message: string
+    }
 
 export interface GitStatusFile {
   path: string
@@ -65,6 +63,25 @@ export interface GitStatus {
 }
 
 export interface KilnApi {
+    system: {
+  stats: () => Promise<{
+    cpu: {
+      usage: number
+    }
+
+    ram: {
+      used: number
+      total: number
+      percent: number
+    }
+
+    gpu: {
+      name: string
+      vram?: number
+      memoryUsed?: number
+    }[]
+  }>
+}
   fs: {
     readDir: (dirPath: string) => Promise<FsEntry[]>
     readFile: (filePath: string) => Promise<string>
@@ -72,6 +89,7 @@ export interface KilnApi {
     openFolderDialog: () => Promise<string | null>
     watch: (dirPath: string, cb: (changedPath: string) => void) => () => void
   }
+
   git: {
     status: (root: string) => Promise<GitStatus>
     stage: (root: string, filePath: string) => Promise<void>
@@ -79,10 +97,12 @@ export interface KilnApi {
     commit: (root: string, message: string) => Promise<void>
     diff: (root: string, filePath: string) => Promise<string>
   }
+
   ollama: {
     health: () => Promise<boolean>
     listModels: () => Promise<OllamaModel[]>
   }
+
   terminal: {
     create: (cwd: string) => Promise<string>
     write: (id: string, data: string) => void
@@ -90,9 +110,9 @@ export interface KilnApi {
     onData: (id: string, cb: (data: string) => void) => () => void
     dispose: (id: string) => void
   }
+
   agent: {
     run: (req: AgentRunRequest) => Promise<void>
-    respondApproval: (callId: string, approved: boolean) => Promise<void>
     onEvent: (cb: (event: AgentEvent) => void) => () => void
   }
 }

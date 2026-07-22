@@ -80,11 +80,11 @@ function registerGitHandlers() {
     return simpleGit(root).diff(["--", filePath]);
   });
 }
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434/api";
 function registerOllamaHandlers() {
   electron.ipcMain.handle("ollama:health", async () => {
     try {
-      const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+      const res = await fetch(`${OLLAMA_BASE_URL}/tags`);
       return res.ok;
     } catch {
       return false;
@@ -92,7 +92,7 @@ function registerOllamaHandlers() {
   });
   electron.ipcMain.handle("ollama:listModels", async () => {
     try {
-      const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+      const res = await fetch(`${OLLAMA_BASE_URL}/tags`);
       if (!res.ok) return [];
       const data = await res.json();
       return data.models.map((m) => ({
@@ -154,179 +154,185 @@ function registerTerminalHandlers() {
     }
   });
 }
-const pendingApprovals = /* @__PURE__ */ new Map();
+const ASK_PROMPT = `
+You are Kiln.
+
+Answer questions about the codebase.
+
+Do not use tools.
+Do not modify files.
+`;
+const CODE_PROMPT = `
+You are Kiln.
+
+Help the user write code and explain implementation changes.
+
+Provide code when necessary.
+
+Do not use tools.
+Do not modify files directly.
+`;
+const PLAN_PROMPT = `
+You are Kiln.
+
+Analyze the project and produce ONLY a structured implementation plan.
+
+Each item should contain:
+
+1. File
+2. Change
+3. Reason
+
+Do not generate code.
+
+Do not modify files.
+Do not use tools.
+`;
+const PLAN_CODE_PROMPT = `
+You are Kiln.
+
+First create a structured implementation plan.
+
+Then provide the code needed to implement that plan.
+
+Do not modify files directly.
+Do not use tools.
+`;
+const AGENT_MODES = {
+  ask: {
+    prompt: ASK_PROMPT,
+    allowWrite: false
+  },
+  code: {
+    prompt: CODE_PROMPT,
+    allowWrite: false
+  },
+  plan: {
+    prompt: PLAN_PROMPT,
+    allowWrite: false
+  },
+  "plan+code": {
+    prompt: PLAN_CODE_PROMPT,
+    allowWrite: false
+  }
+};
 function send(event) {
   getMainWindow()?.webContents.send("agent:event", event);
 }
-const SYSTEM_PROMPT = `You are Kiln, a local coding agent running inside a desktop code editor.
-You can read and write files in the user's workspace and run shell commands when asked.
-Always explain briefly what you are about to do before doing it.`;
-const TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "read_file",
-      description: "Read the contents of a file relative to the workspace root",
-      parameters: {
-        type: "object",
-        properties: { path: { type: "string" } },
-        required: ["path"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "write_file",
-      description: "Write (create or overwrite) a file relative to the workspace root",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string" },
-          content: { type: "string" }
-        },
-        required: ["path", "content"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_dir",
-      description: "List files and folders in a directory relative to the workspace root",
-      parameters: {
-        type: "object",
-        properties: { path: { type: "string" } },
-        required: ["path"]
-      }
-    }
-  }
-];
-async function runTool(workspaceRoot, tool, args) {
-  const resolved = path.join(workspaceRoot, args.path ?? ".");
-  if (tool === "read_file") {
-    const content = await node_fs.promises.readFile(resolved, "utf-8");
-    return { result: content };
-  }
-  if (tool === "list_dir") {
-    const entries = await node_fs.promises.readdir(resolved, { withFileTypes: true });
-    return { result: entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() })) };
-  }
-  if (tool === "write_file") {
-    let before = "";
-    try {
-      before = await node_fs.promises.readFile(resolved, "utf-8");
-    } catch {
-      before = "";
-    }
-    await node_fs.promises.mkdir(path.dirname(resolved), { recursive: true });
-    await node_fs.promises.writeFile(resolved, args.content, "utf-8");
-    return {
-      result: "ok",
-      preview: { path: args.path, before, after: args.content }
-    };
-  }
-  throw new Error(`Unknown tool: ${tool}`);
-}
-async function requestApproval(runId, callId, tool, args, preview) {
-  return new Promise((resolve) => {
-    pendingApprovals.set(callId, { resolve });
-    send({ type: "approval_requested", runId, callId, tool, args, preview });
-  });
-}
 function registerAgentHandlers() {
-  electron.ipcMain.handle("agent:run", async (_e, req) => {
-    const { runId, workspaceRoot, model, autoApprove } = req;
-    const messages = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...req.history
-    ];
-    try {
-      for (let round = 0; round < 8; round++) {
-        const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+  electron.ipcMain.handle(
+    "agent:run",
+    async (_e, req) => {
+      const {
+        runId,
+        model,
+        mode
+      } = req;
+      console.log("========== AGENT ==========");
+      console.log("req =", req);
+      console.log("mode =", mode);
+      const config = AGENT_MODES[mode];
+      console.log("config =", config);
+      if (!config) {
+        throw new Error(`Modo inválido: ${String(mode)}`);
+      }
+      const messages = [
+        {
+          role: "system",
+          content: config.prompt
+        },
+        ...req.history
+      ];
+      async function chatWithOllama(requestBody) {
+        console.log("ANTES DO FETCH");
+        const fetchFn = globalThis.fetch;
+        if (typeof fetchFn !== "function") {
+          throw new Error("fetch não disponível");
+        }
+        const res = await fetchFn(`${OLLAMA_BASE_URL}/chat`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model,
-            messages,
-            tools: TOOLS,
-            stream: false,
-            // Ativa o raciocínio nos modelos que suportam (deepseek-r1,
-            // qwen3, gpt-oss, etc). Modelos sem suporte simplesmente
-            // ignoram este campo e não retornam `message.thinking`.
-            think: true
-          })
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(requestBody)
         });
         if (!res.ok) {
-          throw new Error(`Ollama respondeu com status ${res.status}`);
+          const error = await res.text();
+          throw new Error(
+            `Ollama error ${res.status}: ${error}`
+          );
         }
-        const data = await res.json();
+        console.log("FETCH TERMINOU");
+        console.log("STATUS:", res.status);
+        const json = await res.json();
+        console.log("JSON:", json);
+        return json;
+      }
+      try {
+        const data = await chatWithOllama({
+          model: model ?? "qwen3:4b",
+          messages,
+          stream: false
+        });
         const message = data.message;
-        if (message?.thinking) {
-          send({ type: "agent_thinking", runId, text: message.thinking });
+        console.log("MESSAGE:", message);
+        if (!message) {
+          throw new Error(
+            "Resposta inválida do Ollama"
+          );
         }
-        if (message?.content) {
-          send({ type: "assistant_text", runId, text: message.content });
-        }
-        messages.push(message);
-        const toolCalls = message?.tool_calls;
-        if (!toolCalls || toolCalls.length === 0) {
-          break;
-        }
-        for (const call of toolCalls) {
-          const callId = node_crypto.randomUUID();
-          const toolName = call.function.name;
-          const args = call.function.arguments;
-          send({ type: "tool_call_start", runId, callId, tool: toolName });
-          if (toolName === "write_file" && !autoApprove) {
-            let before = "";
-            try {
-              before = await node_fs.promises.readFile(path.join(workspaceRoot, args.path), "utf-8");
-            } catch {
-              before = "";
-            }
-            const approved = await requestApproval(runId, callId, toolName, args, {
-              path: args.path,
-              before,
-              after: args.content
-            });
-            if (!approved) {
-              messages.push({
-                role: "tool",
-                content: "O usuário rejeitou esta alteração."
-              });
-              continue;
-            }
-          }
-          const { result, preview } = await runTool(workspaceRoot, toolName, args);
-          send({ type: "tool_call_result", runId, callId, result });
-          if (preview) {
-          }
-          messages.push({
-            role: "tool",
-            content: typeof result === "string" ? result : JSON.stringify(result)
+        if (message.thinking) {
+          send({
+            type: "agent_thinking",
+            runId,
+            text: message.thinking
           });
         }
-      }
-      send({ type: "run_complete", runId });
-    } catch (err) {
-      send({
-        type: "run_error",
-        runId,
-        message: err instanceof Error ? err.message : String(err)
-      });
-    }
-  });
-  electron.ipcMain.handle(
-    "agent:respondApproval",
-    async (_e, callId, approved) => {
-      const entry = pendingApprovals.get(callId);
-      if (entry) {
-        entry.resolve(approved);
-        pendingApprovals.delete(callId);
+        if (message.content) {
+          send({
+            type: "assistant_text",
+            runId,
+            text: message.content
+          });
+        }
+        send({
+          type: "run_complete",
+          runId
+        });
+      } catch (err) {
+        send({
+          type: "run_error",
+          runId,
+          message: err instanceof Error ? err.message : String(err)
+        });
       }
     }
   );
+}
+function registerSystemHandlers() {
+  electron.ipcMain.handle("system:stats", async () => {
+    const cpus = os.cpus();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    return {
+      cpu: {
+        cores: cpus.length,
+        model: cpus[0]?.model ?? "unknown",
+        usage: 0
+        // depois colocamos cálculo real
+      },
+      gpu: {
+        vramUsed: 0,
+        vramTotal: 0
+      },
+      ram: {
+        total: totalMem,
+        free: freeMem,
+        used: totalMem - freeMem,
+        percent: (totalMem - freeMem) / totalMem * 100
+      }
+    };
+  });
 }
 const isDev = !electron.app.isPackaged;
 function createWindow() {
@@ -362,6 +368,7 @@ electron.app.whenReady().then(() => {
   registerOllamaHandlers();
   registerTerminalHandlers();
   registerAgentHandlers();
+  registerSystemHandlers();
   createWindow();
   electron.app.on("activate", () => {
     if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -6,6 +6,7 @@ import { registerGitHandlers } from './gitHandlers'
 import { registerOllamaHandlers } from './ollamaHandlers'
 import { registerTerminalHandlers } from './terminalHandlers'
 import { registerAgentHandlers } from './agentHandlers'
+import { registerSystemHandlers } from './systemHandlers'
 
 const isDev = !app.isPackaged
 
@@ -47,6 +48,7 @@ app.whenReady().then(() => {
   registerOllamaHandlers()
   registerTerminalHandlers()
   registerAgentHandlers()
+  registerSystemHandlers()
 
   createWindow()
 
